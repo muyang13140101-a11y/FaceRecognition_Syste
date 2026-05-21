@@ -31,7 +31,7 @@ def assess_frame_quality(frame):
 
 def main():
     print("[INFO] 正在唤醒电脑摄像头...")
-    # 如果你之前用的是 cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)，请自行加上 CAP_DSHOW
+    # 如果 Windows 系统仍然报错，请将其修改为 cv2.VideoCapture(0, cv2.CAP_DSHOW)
     cap = cv2.VideoCapture(0) 
     
     if not cap.isOpened():
@@ -56,36 +56,38 @@ def main():
 
     print("[INFO] 🔴 开始录制！请开始你的表演！")
 
-    # 在循环开始前，创建一个可自由缩放的窗口
+    # ==========================================
+    # 核心修正：在唯一的一个录制循环前，初始化 3:4 比例窗口
+    # ==========================================
     cv2.namedWindow("IoT Real-time Quality Capture", cv2.WINDOW_NORMAL)
-    # 强制将窗口初始化为 480x640 (3:4 的竖屏小窗口)
-    cv2.resizeWindow("IoT Real-time Quality Capture", 480, 640)
+    cv2.resizeWindow("IoT Real-time Quality Capture", 480, 640) # 强制给 Windows 一个初试尺寸
 
     for i in range(frames_to_capture):
         ret, frame = cap.read()
         if not ret:
             break
             
-        # 计算每一帧的真实质量分数 (用原始画质算，保证准确)
+        # 计算每一帧的真实质量分数
         score = assess_frame_quality(frame)
         scores.append(score)
         
-        # 把显示画面强制转换为 3:4 (宽480, 高640) 竖屏显示
-        # 这样窗口非常小巧，你的脸也能放到正中间
+        # 核心修正：将画面强制裁剪或调整为 3:4 的 480x640 竖屏小画面
         display_frame = cv2.resize(frame, (480, 640))
         
-        # 在画面上实时显示数据
+        # 在变形后的标准 3:4 画面上绘制学术文本
         color = (0, 0, 255) if score < 0.5 else (0, 255, 0)
         cv2.putText(display_frame, f"Frame: {i+1}/{frames_to_capture}", (20, 40), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
         cv2.putText(display_frame, f"Quality Score: {score:.2f}", (20, 80), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
         
+        # 展现干净紧凑的小窗口
         cv2.imshow("IoT Real-time Quality Capture", display_frame)
         
         if cv2.waitKey(20) & 0xFF == ord('q'):
             break
 
+    # 录制结束后，一次性释放并销毁所有窗口
     cap.release()
     cv2.destroyAllWindows()
     print("[INFO] 录制完成！正在生成最终学术图表...")
