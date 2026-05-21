@@ -27,17 +27,13 @@ class FaceMatcher:
 
         # 遍历底库中的每一个人
         for name, known_feature in self.known_users:
-            # 第一性原理：计算余弦相似度
-            # 公式: 向量点积 / (向量A的模长 * 向量B的模长)
-            dot_product = np.dot(unknown_feature, known_feature)
-            norm_a = np.linalg.norm(unknown_feature)
-            norm_b = np.linalg.norm(known_feature)
-            
-            # 防止除以 0 的情况
-            if norm_a == 0 or norm_b == 0:
-                continue
-                
-            similarity = dot_product / (norm_a * norm_b)
+            # ==========================================
+            # 核心数学优化：超球面特征的极速余弦计算
+            # ==========================================
+            # 由于在 extractor.py 中已经进行了严格的 L2 范数归一化 (||A||=1, ||B||=1)
+            # 余弦相似度计算公式直接退化为向量的纯点积 (Dot Product)
+            # 彻底省去了极其耗时的平方求和与开根号运算
+            similarity = float(np.dot(unknown_feature, known_feature))
 
             # 找出相似度最高的那个人
             if similarity > highest_similarity:
@@ -51,7 +47,6 @@ class FaceMatcher:
             # 就算是最高分也没及格，说明是个陌生人
             return "Unknown", highest_similarity
         
-        # 在 matcher.py 的 FaceMatcher 类最后加上这个方法
     def reload(self):
         """重新从数据库加载特征，用于动态录入后更新记忆"""
         print("[INFO] 正在刷新内存中的人员特征库...")
