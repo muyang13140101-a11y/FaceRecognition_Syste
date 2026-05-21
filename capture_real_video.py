@@ -31,7 +31,8 @@ def assess_frame_quality(frame):
 
 def main():
     print("[INFO] 正在唤醒电脑摄像头...")
-    cap = cv2.VideoCapture(0) # 0 代表系统默认摄像头
+    # 如果你之前用的是 cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)，请自行加上 CAP_DSHOW
+    cap = cv2.VideoCapture(0) 
     
     if not cap.isOpened():
         print("[ERROR] 无法打开摄像头！请检查电脑摄像头权限。")
@@ -55,23 +56,32 @@ def main():
 
     print("[INFO] 🔴 开始录制！请开始你的表演！")
 
+    # 在循环开始前，创建一个可自由缩放的窗口
+    cv2.namedWindow("IoT Real-time Quality Capture", cv2.WINDOW_NORMAL)
+    # 强制将窗口初始化为 480x640 (3:4 的竖屏小窗口)
+    cv2.resizeWindow("IoT Real-time Quality Capture", 480, 640)
+
     for i in range(frames_to_capture):
         ret, frame = cap.read()
         if not ret:
             break
             
-        # 计算每一帧的真实质量分数
+        # 计算每一帧的真实质量分数 (用原始画质算，保证准确)
         score = assess_frame_quality(frame)
         scores.append(score)
         
+        # 把显示画面强制转换为 3:4 (宽480, 高640) 竖屏显示
+        # 这样窗口非常小巧，你的脸也能放到正中间
+        display_frame = cv2.resize(frame, (480, 640))
+        
         # 在画面上实时显示数据
         color = (0, 0, 255) if score < 0.5 else (0, 255, 0)
-        cv2.putText(frame, f"Frame: {i+1}/{frames_to_capture}", (20, 40), 
+        cv2.putText(display_frame, f"Frame: {i+1}/{frames_to_capture}", (20, 40), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-        cv2.putText(frame, f"Quality Score: {score:.2f}", (20, 80), 
+        cv2.putText(display_frame, f"Quality Score: {score:.2f}", (20, 80), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
         
-        cv2.imshow("IoT Real-time Quality Capture", frame)
+        cv2.imshow("IoT Real-time Quality Capture", display_frame)
         
         if cv2.waitKey(20) & 0xFF == ord('q'):
             break
@@ -83,9 +93,7 @@ def main():
     # ==========================================
     # 模拟系统的时间序列降噪算法 (滑动平均滤波)
     # ==========================================
-    # 真实数据会有很多毛刺，这里用一维卷积模拟算法平滑效果
     smoothed_scores = np.convolve(scores, np.ones(5)/5, mode='same')
-    # 处理首尾边界异常值
     smoothed_scores[:2] = scores[:2]
     smoothed_scores[-2:] = scores[-2:]
 
@@ -94,15 +102,12 @@ def main():
     # ==========================================
     plt.figure(figsize=(9, 5))
     
-    # 画原始真实数据 (蓝色，带透明度)
     plt.plot(scores, color='#1f77b4', alpha=0.4, linewidth=1.5, 
              label='原始视频帧质量评分 (含运动模糊与光线突变)')
     
-    # 画降噪后的平滑数据 (红色，加粗)
     plt.plot(smoothed_scores, color='#d62728', linewidth=2.5, 
              label='算法动态降噪后的平滑质量分数')
              
-    # 画出系统的及格线
     plt.axhline(y=0.45, color='gray', linestyle='--', linewidth=1.5, 
                 label='系统判定阈值 (低于此分数的帧将被剔除)')
 
