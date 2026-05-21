@@ -1,5 +1,4 @@
 import cv2
-import math
 import numpy as np
 from mtcnn import MTCNN
 
@@ -8,14 +7,26 @@ class FaceDetector:
         """
         初始化人脸检测器
         本系统在 PC 端运行，算力充沛。采用 MTCNN 进行高精度感知，
-        为后续的 2D 仿射对齐提供 5 点拓扑坐标。
+        为后续的 5点相似变换对齐 (Similarity Transform) 提供拓扑坐标。
         """
         self.detector = MTCNN() 
-        print("[INFO] MTCNN 检测器初始化成功，准备执行高精度感知与仿射对齐。")
+        print("[INFO] MTCNN 检测器初始化成功，已启用标准 5点拓扑归一化。")
+
+        # ==========================================
+        # 核心机密：ArcFace 官方标准的 112x112 面部基准点物理坐标
+        # 顺序: [左眼, 右眼, 鼻尖, 左嘴角, 右嘴角]
+        # ==========================================
+        self.reference_pts = np.array([
+            [38.2946, 51.6963], 
+            [73.5318, 51.5014], 
+            [56.0252, 71.7366], 
+            [41.5493, 92.3655], 
+            [70.7299, 92.2041]  
+        ], dtype=np.float32)
 
     def detect_and_crop(self, image_array):
         """
-        传入图像，执行联合检测与仿射旋转对齐，返回端正的人脸切片列表。
+        传入图像，执行联合检测与 5点相似变换对齐，返回端正的 112x112 人脸切片列表。
         """
         # 1. 颜色通道转换
         rgb_image = cv2.cvtColor(image_array, cv2.COLOR_BGR2RGB)
@@ -29,50 +40,39 @@ class FaceDetector:
         for result in results:
             # 仅处理置信度极高的真切人脸
             if result['confidence'] > 0.95:
-                x, y, width, height = result['box']
-                x, y = abs(x), abs(y) 
+                # 提取原图中的边界框，保留下来用于给 UI 界面画框
+                box = result['box'] 
+                x, y, width, height = box
+                x, y = abs(x), abs(y)
+                # 防止MTCNN的负数越界Bug，修复返回的 box
+                safe_box = [x, y, width, height]
                 
                 # ==========================================
-                # 核心升级：基于双眼坐标的 2D 仿射变换与纠偏
+                # 终极升级：基于 5 个关键点的相似变换对齐 (无缝对接 ArcFace 理论)
                 # ==========================================
-                # 提取 MTCNN 同步输出的面部关键点
                 keypoints = result['keypoints']
-                left_eye = keypoints['left_eye']
-                right_eye = keypoints['right_eye']
                 
-                # A. 计算双眼在二维平面的倾斜角 (反正切解算)
-                dy = right_eye[1] - left_eye[1]
-                dx = right_eye[0] - left_eye[0]
-                angle = math.degrees(math.atan2(dy, dx))
+                # A. 按标准顺序组织当前人脸的真实 5 点坐标
+                src_pts = np.array([
+                    keypoints['left_eye'],
+                    keypoints['right_eye'],
+                    keypoints['nose'],
+                    keypoints['mouth_left'],
+                    keypoints['mouth_right']
+                ], dtype=np.float32)
                 
-                # B. 确定旋转轴心 (以面部中心为轴，防止旋转后原边界框截断下巴)
-                center_x = x + width // 2
-                center_y = y + height // 2
+                # B. 求解 4 自由度仿射变换矩阵 (包含 旋转、平移、尺度缩放)
+                # 底层数学原理：利用最小二乘法，算出如何把当前歪七扭八的脸，完美拉扯映射到基准点上
+                M, _ = cv2.estimateAffinePartial2D(src_pts, self.reference_pts)
                 
-                # C. 动态死区滤波器 (Deadband Filter)
-                # 作用：PC 摄像头视频流中，关键点会有 1-2 像素的微弱抖动。
-                # 如果角度极小（< 3度），强行旋转会导致画面高频抽搐。
-                if abs(angle) > 3.0:
-                    # 生成 2D 刚性旋转仿射矩阵
-                    M = cv2.getRotationMatrix2D((center_x, center_y), angle, scale=1.0)
-                    
-                    # 获取原图尺寸并执行双三次插值重采样
-                    h_img, w_img = image_array.shape[:2]
-                    aligned_img = cv2.warpAffine(image_array, M, (w_img, h_img), flags=cv2.INTER_CUBIC)
-                    
-                    # 在旋转纠偏后的端正图像上，执行正交裁剪
-                    y_end = min(y + height, h_img)
-                    x_end = min(x + width, w_img)
-                    face_crop = aligned_img[y : y_end, x : x_end]
-                else:
-                    # 角度极小，视为纯净正脸或白噪声，跳过仿射计算直接裁剪
-                    h_img, w_img = image_array.shape[:2]
-                    y_end = min(y + height, h_img)
-                    x_end = min(x + width, w_img)
-                    face_crop = image_array[y : y_end, x : x_end]
+                if M is None:
+                    continue # 极其罕见的矩阵求解失败，则跳过
                 
-                # 确保裁剪出的是有效图像防崩溃
-                if face_crop.size > 0:
-                    cropped_faces.append((face_crop, result['box']))
+                # C. 一步到位：利用矩阵对原图进行重采样，直接切出一张完美的 112x112 正脸图
+                # 这一步取代了之前的“计算角度 -> 旋转全图 -> 按框抠图 -> 强行缩放”的冗余操作
+                aligned_face = cv2.warpAffine(image_array, M, (112, 112), borderValue=0.0)
+                
+                if aligned_face.size > 0:
+                    cropped_faces.append((aligned_face, safe_box))
                 
         return cropped_faces
