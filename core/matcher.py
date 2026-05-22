@@ -39,6 +39,7 @@ class FaceMatcher:
             if similarity > highest_similarity:
                 highest_similarity = similarity
                 best_match_name = name
+            print(f"[DEBUG] 当前镜头人脸最高匹配度 -> {best_match_name}: {highest_similarity:.4f}")
 
         # 检验是否过了及格线
         if highest_similarity >= self.threshold:
