@@ -12,6 +12,7 @@ from qfluentwidgets import (FluentWindow, SubtitleLabel, setTheme, Theme,
 from core.detector import FaceDetector
 from core.extractor import FaceExtractor
 from core.matcher import FaceMatcher
+from core.quality import QualityAssessor  # <--- 核心引入：第5章质量评估模块
 from utils.db_helper import DBHelper
 
 # ==========================================
@@ -29,6 +30,10 @@ class VideoThread(QThread):
         self.detector = FaceDetector()
         self.extractor = FaceExtractor()
         self.matcher = FaceMatcher(threshold=0.6)
+        
+        # 挂载第 5 章核心模块：滑动窗口长度设为 5，拉普拉斯阈值设为 60
+        self.quality_assessor = QualityAssessor(window_size=5, blur_threshold=60.0) 
+        
         self.db = DBHelper()
         
         # 动态录入专属变量
@@ -57,13 +62,26 @@ class VideoThread(QThread):
                 cropped_faces = self.detector.detect_and_crop(frame)
                 for face_crop, box in cropped_faces:
                     x, y, w, h = box
+                    
+                    # ==========================================
+                    # 论文第 5.4 节：动态阈值判定与劣质帧前置剔除机制
+                    # ==========================================
+                    is_valid, score = self.quality_assessor.assess_frame(face_crop)
+                    
+                    if not is_valid:
+                        # 触发降噪拦截！画黄色警告框，不提取特征
+                        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 255), 2)
+                        cv2.putText(frame, f"Blur/Dark! ({score:.1f})", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                        continue  # 核心：直接抛弃该帧！
+
+                    # 只有通过了质量检测的“高清脸”，才准许放行提取特征
                     face_crop_rgb = cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB)
                     feature = self.extractor.extract_feature(face_crop_rgb)
                     name, confidence = self.matcher.match(feature)
 
                     color = (255, 255, 255) if name != "Unknown" else (0, 0, 255)
                     cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-                    text = f"{name} ({confidence*100:.1f}%)"
+                    text = f"{name} ({confidence*100:.1f}%) Q:{score:.1f}"
                     cv2.putText(frame, text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
                     if name != "Unknown":
@@ -72,34 +90,41 @@ class VideoThread(QThread):
                         self.update_log_signal.emit(f"[警告] 拦截未知人员！")
 
             elif self.state == "ENROLL":
-                # 动态录入模式：寻找画面中最清晰的一张脸
+                # 动态录入模式：必须采集最高质量的面部
                 cropped_faces = self.detector.detect_and_crop(frame)
                 if len(cropped_faces) > 0:
                     face_crop, box = cropped_faces[0] # 取第一张脸
                     x, y, w, h = box
                     
-                    # 绘制扫描光效特效 (青蓝色框)
-                    cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 204, 0), 2)
-                    cv2.putText(frame, f"Scanning: {self.enroll_name}...", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 204, 0), 2)
-
-                    face_crop_rgb = cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB)
-                    feature = self.extractor.extract_feature(face_crop_rgb)
+                    # 录入时的质量门槛更为严格！
+                    is_valid, score = self.quality_assessor.assess_frame(face_crop)
                     
-                    # 收集有效特征
-                    if np.sum(feature) != 0:
-                        self.enroll_features.append(feature)
-                        progress = int((len(self.enroll_features) / self.enroll_target_frames) * 100)
-                        self.enroll_progress_signal.emit(progress)
+                    if not is_valid:
+                        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 2) # 红色警告框
+                        cv2.putText(frame, f"Quality Too Low! Wait...", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                    else:
+                        # 绘制扫描光效特效 (青蓝色框)
+                        cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 204, 0), 2)
+                        cv2.putText(frame, f"Scanning: {self.enroll_name}... Q:{score:.1f}", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 204, 0), 2)
 
-                        # 采集完毕，融合并存入数据库
-                        if len(self.enroll_features) >= self.enroll_target_frames:
-                            # 多帧平均融合算法，大幅提升特征稳定性
-                            final_feature = np.mean(self.enroll_features, axis=0)
-                            self.db.insert_user(self.enroll_name, final_feature)
-                            
-                            self.matcher.reload() # 热更新记忆
-                            self.state = "MONITOR" # 切回监控模式
-                            self.enroll_success_signal.emit(self.enroll_name)
+                        face_crop_rgb = cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB)
+                        feature = self.extractor.extract_feature(face_crop_rgb)
+                        
+                        # 收集有效特征
+                        if np.sum(feature) != 0:
+                            self.enroll_features.append(feature)
+                            progress = int((len(self.enroll_features) / self.enroll_target_frames) * 100)
+                            self.enroll_progress_signal.emit(progress)
+
+                            # 采集完毕，融合并存入数据库
+                            if len(self.enroll_features) >= self.enroll_target_frames:
+                                # 多帧平均融合算法，大幅提升特征稳定性
+                                final_feature = np.mean(self.enroll_features, axis=0)
+                                self.db.insert_user(self.enroll_name, final_feature)
+                                
+                                self.matcher.reload() # 热更新记忆
+                                self.state = "MONITOR" # 切回监控模式
+                                self.enroll_success_signal.emit(self.enroll_name)
                 else:
                     cv2.putText(frame, "Please face the camera", (150, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 200, 255), 2)
 
