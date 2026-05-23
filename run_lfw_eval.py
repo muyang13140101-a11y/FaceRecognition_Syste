@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 import time
 
-# 导入你自己的特征提取器！这样跑出来的结果就是你考勤系统的真实性能
+# 导入你自己的特征提取器！
 from core.extractor import FaceExtractor 
 from core.detector import FaceDetector
 
