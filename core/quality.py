@@ -29,6 +29,7 @@ class QualityAssessor:
         # ==========================================
         # 运动模糊会导致边缘高频信息丢失，方差暴跌
         laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+        laplacian_score = min(laplacian_var * 5.0, 100.0)
 
         # ==========================================
         # 核心算子 B：全局均值评估光照度 (对应公式 5-2)
