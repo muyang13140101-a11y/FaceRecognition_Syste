@@ -6,9 +6,6 @@ from sklearn.metrics import roc_curve, auc
 from scipy.optimize import brentq
 from scipy.interpolate import interp1d
 
-# ==========================================
-# 1. 读取你跑出来的真实 CSV 数据
-# ==========================================
 CSV_FILE = "./eval_test/lfw_real_results.csv"
 
 y_true = []
@@ -17,7 +14,7 @@ y_scores = []
 print(f"[INFO] 正在读取真实评估数据: {CSV_FILE}...")
 with open(CSV_FILE, 'r', encoding='utf-8') as f:
     reader = csv.reader(f)
-    next(reader) # 跳过表头
+    next(reader) 
     for row in reader:
         if len(row) == 2:
             y_true.append(int(row[0]))
@@ -26,15 +23,10 @@ with open(CSV_FILE, 'r', encoding='utf-8') as f:
 y_true = np.array(y_true)
 y_scores = np.array(y_scores)
 
-# ==========================================
-# 核心修改区：严格遵循毕业论文排版要求 (修复中文方块字Bug)
-# ==========================================
-# 五号字在 Word 中对应 10.5 磅 (pt)
 plt.rcParams['font.size'] = 10.5
-# 强制将基础全局字体设为宋体 (SimSun)，这样所有中文都能完美显示
 plt.rcParams['font.family'] = ['sans-serif']
 plt.rcParams['font.sans-serif'] = ['SimSun'] 
-plt.rcParams['axes.unicode_minus'] = False # 正常显示负号
+plt.rcParams['axes.unicode_minus'] = False 
 
 # ==========================================
 # 2. 绘制图 6-1：正负样本相似度真实分布直方图
@@ -58,7 +50,7 @@ plt.savefig('./eval_test/Fig6-1_Real_Distribution.png', dpi=300)
 plt.close()
 
 # ==========================================
-# 3. 绘制图 6-3：真实的 ROC 曲线 (带有 AUC 面积)
+# 3. 绘制图 6-3：真实的 ROC 曲线
 # ==========================================
 fpr, tpr, thresholds = roc_curve(y_true, y_scores)
 roc_auc = auc(fpr, tpr)
@@ -78,7 +70,7 @@ plt.savefig('./eval_test/Fig6-3_Real_ROC.png', dpi=300)
 plt.close()
 
 # ==========================================
-# 4. 绘制图 6-4：FAR 与 FRR 交叉折线图
+# 4. 绘制图 6-4：FAR 与 FRR 交叉折线图 (带对数优化)
 # ==========================================
 frr = 1 - tpr
 
@@ -91,15 +83,19 @@ eer_threshold = interp1d(fpr, thresholds)(eer)
 
 plt.plot(eer_threshold, eer, 'ko', markersize=6)
 plt.annotate(f'EER 最佳阈值 $\\approx$ {eer_threshold:.3f}', 
-             xy=(eer_threshold, eer), xytext=(eer_threshold-0.15, eer+0.2),
+             xy=(eer_threshold, eer), xytext=(eer_threshold-0.15, eer+0.2), # 如果文字重叠，这里稍微改下坐标
              arrowprops=dict(facecolor='black', shrink=0.05, width=1, headwidth=5))
+
+# 核心优化：使用对数坐标轴显示错误率，视觉效果更符合顶级学术规范
+plt.yscale('log')
+plt.ylim([10**-4, 1.0]) 
 
 plt.title('FAR 与 FRR 随判定阈值变化曲线')
 plt.xlabel('余弦相似度阈值')
-plt.ylabel('错误率')
+plt.ylabel('错误率 (Log Scale)')
 plt.xlim([-0.2, 1.0])
-plt.legend(loc='center right')
-plt.grid(True, linestyle=':', alpha=0.7)
+plt.legend(loc='upper center') # 挪一下图例位置，防止挡住曲线
+plt.grid(True, which="both", linestyle=':', alpha=0.7)
 plt.tight_layout()
 plt.savefig('./eval_test/Fig6-4_Real_FAR_FRR.png', dpi=300)
 plt.close()
