@@ -1,0 +1,80 @@
+import os
+import html  # 【核心修复1】引入内置的 HTML 转义模块
+import graphviz
+
+def create_irse50_graph():
+    # 输出路径
+    output_dir = r"D:\FaceRecognition_System\eval_test"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    dot = graphviz.Digraph('IR_SE50_Topology', format='png')
+    dot.attr(rankdir='TB', size='12,9!', ratio='fill', nodesep='0.6', ranksep='0.6')
+    dot.attr('node', shape='none')
+    dot.attr('edge', fontname='Times New Roman', fontsize='11')
+
+    def make_node(node_id, title_cn, details_en, color="#E8F0FE"):
+        label_html = f'''<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="8">
+            <TR><TD BGCOLOR="{color}"><B><FONT FACE="SimSun" POINT-SIZE="14">{title_cn}</FONT></B></TD></TR>'''
+        
+        for detail in details_en:
+            # 【核心修复2】对所有可能包含 >、<、& 的数学符号进行安全转义，防止破坏 Graphviz 语法
+            safe_detail = html.escape(detail)
+            label_html += f'<TR><TD><FONT FACE="Times New Roman" POINT-SIZE="12">{safe_detail}</FONT></TD></TR>'
+            
+        label_html += '</TABLE>>'
+        dot.node(node_id, label=label_html)
+
+    # ---------------- 主干网络 ----------------
+    make_node('Input', '输入图像', ['112 × 112 × 3'], color='#FCE8E6')
+    make_node('Stem', 'Stem 网络', [
+        'Conv2d (K: 3x3, Stride: 1, Pad: 1)', 'BatchNorm2d', 'PReLU', 'Output: 112 × 112 × 64'
+    ])
+    make_node('Stage1', 'Stage 1 (3× IR-SE Block)', [
+        '1st Block: Downsample (Stride: 2)', '2× Identity Blocks (Stride: 1)', 'Output: 56 × 56 × 64'
+    ], color="#E6F4EA")
+    make_node('Stage2', 'Stage 2 (4× IR-SE Block)', [
+        '1st Block: Downsample (Stride: 2)', '3× Identity Blocks (Stride: 1)', 'Output: 28 × 28 × 128'
+    ], color="#FFF3E0")
+    make_node('Stage3', 'Stage 3 (14× IR-SE Block)', [
+        '1st Block: Downsample (Stride: 2)', '13× Identity Blocks (Stride: 1)', 'Output: 14 × 14 × 256'
+    ], color="#F3E5F5")
+    make_node('Stage4', 'Stage 4 (3× IR-SE Block)', [
+        '1st Block: Downsample (Stride: 2)', '2× Identity Blocks (Stride: 1)', 'Output: 7 × 7 × 512'
+    ], color="#E0F7FA")
+    make_node('Output', '输出层 (Output Layer)', [
+        'BatchNorm2d(512)', 'Dropout (p = 0.6)', 'Flatten()', 'Linear(25088 -> 512)', 'BatchNorm1d(512)', 'Output: 512'
+    ])
+    make_node('L2Norm', 'L2 归一化计算', ['Output: 512 (L2 Normalized)'], color='#FCE8E6')
+
+    dot.edges([('Input', 'Stem'), ('Stem', 'Stage1'), ('Stage1', 'Stage2'),
+               ('Stage2', 'Stage3'), ('Stage3', 'Stage4'),
+               ('Stage4', 'Output'), ('Output', 'L2Norm')])
+
+    # ---------------- IR-SE 内部结构 ----------------
+    with dot.subgraph(name='cluster_irse') as c:
+        c.attr(label='IR-SE 模块内部流转 (以带下采样的Block为例)', fontname='SimSun', fontsize='16', style='dashed', color='#757575')
+        make_node('IR_In', '输入张量 (Input)', ['Shape: C_in × H × W'], color='#F5F5F5')
+        make_node('Shortcut', '捷径分支 (Shortcut Layer)', ['Conv2d (K: 1x1, Stride: 2) / MaxPool', 'BatchNorm2d'], color='#FFF9C4')
+        make_node('Res_BN1', '特征标准化', ['BatchNorm2d'])
+        make_node('Res_Conv1', '特征提取层 1', ['Conv2d (K: 3x3, Stride: 1)', 'PReLU (Depth)'])
+        make_node('Res_Conv2', '特征提取层 2 (下采样)', ['Conv2d (K: 3x3, Stride: 2)', 'BatchNorm2d'])
+        make_node('SE_Squeeze', 'SE 通道压缩', ['AdaptiveAvgPool2d(1)'])
+        make_node('SE_Excite', 'SE 权重激活', ['Conv2d 1x1 (C_out / 16)', 'ReLU', 'Conv2d 1x1 (C_out)', 'Sigmoid'])
+        make_node('Scale', '通道注意力加权 (Multiply)', ['Out = Feature ⊗ Attention'], color='#F8BBD0')
+        make_node('Add', '残差融合 (Add)', ['Final = Residual + Shortcut'])
+
+        c.edges([
+            ('IR_In', 'Res_BN1'), ('Res_BN1', 'Res_Conv1'), ('Res_Conv1', 'Res_Conv2'),
+            ('Res_Conv2', 'SE_Squeeze'), ('SE_Squeeze', 'SE_Excite'), ('SE_Excite', 'Scale'),
+            ('Res_Conv2', 'Scale')
+        ])
+        c.edges([('IR_In', 'Shortcut'), ('Shortcut', 'Add'), ('Scale', 'Add')])
+
+    dot.edge('Stage3', 'IR_In', style='dotted', color='gray', label='内部细节展开', fontname='SimSun')
+
+    out_file = dot.render('IR_SE50_Network_Topology', directory=output_dir, cleanup=True)
+    print(f"✅ 拓扑图已成功生成并保存至绝对路径：\n{out_file}")
+
+if __name__ == '__main__':
+    create_irse50_graph()
