@@ -2,7 +2,7 @@ import numpy as np
 from utils.db_helper import DBHelper
 
 class FaceMatcher:
-    def __init__(self, threshold=0.4):
+    def __init__(self, threshold=0.316):
         """
         初始化特征比对器
         :param threshold: 认定为本人的及格线（0.0 到 1.0 之间，越大越严格）
