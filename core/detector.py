@@ -39,7 +39,7 @@ class FaceDetector:
         # 3. 遍历检测到的所有人脸
         for result in results:
             # 仅处理置信度极高的真切人脸
-            if result['confidence'] > 0.60:
+            if result['confidence'] > 0.40:
                 # 提取原图中的边界框，保留下来用于给 UI 界面画框
                 box = result['box'] 
                 x, y, width, height = box
