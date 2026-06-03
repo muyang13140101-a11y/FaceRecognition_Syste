@@ -4,16 +4,15 @@ import csv
 import numpy as np
 from core.quality import QualityAssessor
 from core.detector import FaceDetector 
-# 1. 修改了这里的导入名称，与你的 extractor.py 保持绝对一致
 from core.extractor import FaceExtractor
 from core.matcher import FaceMatcher
 
 def run_ablation_experiment(video_path, enable_filter, output_csv_name):
+    print(f"\n==============================================")
     print(f"正在运行测试，前置过滤状态：{enable_filter}...")
+    print(f"==============================================")
     quality_assessor = QualityAssessor(window_size=5, blur_threshold=54.80)
     detector = FaceDetector()
-    
-    # 2. 修改了这里的实例化名称
     extractor = FaceExtractor()
     matcher = FaceMatcher()
     
@@ -30,6 +29,8 @@ def run_ablation_experiment(video_path, enable_filter, output_csv_name):
                 break
                 
             frame_id += 1
+            if frame_id % 30 == 0: 
+                print(f"正在处理第 {frame_id} 帧...")
             start_time = time.time()
             
             # 自动化信道噪声物理指纹提取
@@ -53,22 +54,28 @@ def run_ablation_experiment(video_path, enable_filter, output_csv_name):
             
             # 重度网络管线
             cnn_activated = True
-            faces = detector.detect(frame)
+            
+            # 【修复 1】：使用你真实的 detect_and_crop 方法名
+            faces = detector.detect_and_crop(frame)
+            
             if len(faces) > 0:
-                face_crop = faces[0] 
+                # 【修复 2】：faces[0] 是 (aligned_face, safe_box) 元组，取 [0][0] 获取图像
+                face_crop = faces[0][0] 
                 
-                # 3. 修改了这里的函数调用，与你的 extract_feature 保持绝对一致
                 features = extractor.extract_feature(face_crop)
-                identity = matcher.match(features)
+                
+                # 【修复 3】：你的 match 方法返回了两个值 (name, score)，将其解包
+                match_name, match_score = matcher.match(features)
+                identity = match_name
             
             time_cost_ms = (time.time() - start_time) * 1000
             writer.writerow([frame_id, time_cost_ms, smoothed_score, cnn_activated, identity, lap_var, bright_penalty])
 
     cap.release()
-    print("自动化数据采集完成！已保存至: " + output_csv_name)
+    print(f"\n>>> 自动化数据采集完成！已保存至: {output_csv_name} <<<")
 
 if __name__ == "__main__":
-    # 请确保视频在同一目录下，或者填写完整的绝对路径
+    # 请确保视频在同一目录下
     test_video_file = "test_noise_video.mp4" 
     run_ablation_experiment(test_video_file, enable_filter=False, output_csv_name="result_without_filter.csv")
     run_ablation_experiment(test_video_file, enable_filter=True, output_csv_name="result_with_filter.csv")
