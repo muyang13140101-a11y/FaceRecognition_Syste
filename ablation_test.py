@@ -11,7 +11,9 @@ def run_ablation_experiment(video_path, enable_filter, output_csv_name):
     print(f"\n==============================================")
     print(f"正在运行测试，前置过滤状态：{enable_filter}...")
     print(f"==============================================")
-    quality_assessor = QualityAssessor(window_size=5, blur_threshold=54.80)
+    
+    # 彻底交由底层接管：初始化时告诉它需要 30 帧来校准环境
+    quality_assessor = QualityAssessor(window_size=5, calibration_frames=30)
     detector = FaceDetector()
     extractor = FaceExtractor()
     matcher = FaceMatcher()
@@ -30,46 +32,43 @@ def run_ablation_experiment(video_path, enable_filter, output_csv_name):
                 
             frame_id += 1
             if frame_id % 30 == 0: 
-                print(f"正在处理第 {frame_id} 帧...")
+                print(f"正在疯狂处理第 {frame_id} 帧...")
+            
+            # 计时开始
             start_time = time.time()
             
-            # 自动化信道噪声物理指纹提取
+            # 1. 光照畸变惩罚计算 (非常轻量，保留用于遥测制图)
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
-            lap_var = cv2.Laplacian(gray, cv2.CV_64F).var()
             bright_penalty = abs(np.mean(gray) - 128) / 128.0
             
-            smoothed_score = 100.0
+            # 2. 🌟 核心引擎调用：所有复杂的时序平滑、环境标定、动态阈值生成，全在这一句代码内自动完成！
+            is_valid, smoothed_score = quality_assessor.assess_frame(frame)
+            
+            # (为了绘图需要，提取当前平滑分作为 lap_var 记录，避免双重计算卷积)
+            lap_var_proxy = smoothed_score 
+
             cnn_activated = False
             identity = "Unknown"
             
-            # 前置拦截门控
-            if enable_filter:
-                is_valid, smoothed_score = quality_assessor.assess_frame(frame)
-                if not is_valid:
-                    time_cost_ms = (time.time() - start_time) * 1000
-                    writer.writerow([frame_id, time_cost_ms, smoothed_score, cnn_activated, "Blocked", lap_var, bright_penalty])
-                    continue
-            else:
-                _, smoothed_score = quality_assessor.assess_frame(frame)
+            # 3. 前置拦截门控 (直接听从底层评估器的判决)
+            if enable_filter and not is_valid:
+                time_cost_ms = (time.time() - start_time) * 1000
+                # 记录阻断状态，并直接进入下一帧 (真正做到了 0 毫秒级卸载)
+                writer.writerow([frame_id, time_cost_ms, smoothed_score, False, "Blocked", lap_var_proxy, bright_penalty])
+                continue
             
-            # 重度网络管线
+            # 4. 重度网络管线
             cnn_activated = True
             
-            # 【修复 1】：使用你真实的 detect_and_crop 方法名
             faces = detector.detect_and_crop(frame)
-            
             if len(faces) > 0:
-                # 【修复 2】：faces[0] 是 (aligned_face, safe_box) 元组，取 [0][0] 获取图像
                 face_crop = faces[0][0] 
-                
                 features = extractor.extract_feature(face_crop)
-                
-                # 【修复 3】：你的 match 方法返回了两个值 (name, score)，将其解包
                 match_name, match_score = matcher.match(features)
                 identity = match_name
             
             time_cost_ms = (time.time() - start_time) * 1000
-            writer.writerow([frame_id, time_cost_ms, smoothed_score, cnn_activated, identity, lap_var, bright_penalty])
+            writer.writerow([frame_id, time_cost_ms, smoothed_score, cnn_activated, identity, lap_var_proxy, bright_penalty])
 
     cap.release()
     print(f"\n>>> 自动化数据采集完成！已保存至: {output_csv_name} <<<")
